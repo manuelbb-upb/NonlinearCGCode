@@ -18,6 +18,7 @@ begin
 	Pkg.add("LaTeXTabulars")
 	Pkg.add("LaTeXStrings")
 	Pkg.add("ProgressLogging")
+	Pkg.add("JLD2")
 end
 
 # ╔═╡ 61eae34f-e8d3-4afb-ac6f-f6b33096373f
@@ -37,6 +38,9 @@ using Printf
 
 # ╔═╡ 8564d05c-1c37-4bb8-bbac-9cecf3781e11
 using ProgressLogging
+
+# ╔═╡ e5c0f5ce-5fe6-418f-807d-b701a92f2427
+using JLD2
 
 # ╔═╡ 149ef455-62bb-47e8-a77d-6a3c5eaa8444
 md"## Dependencies"
@@ -81,10 +85,10 @@ They are later converted to a `MOP` that is consumed by `optimize`.
 # ╔═╡ 45d78cff-a07e-4f79-96e0-af05e07a0ae9
 PROBLEMS = OrderedDict{String, Any}(
 	"BK1" => TP.BK1(),
-	"DDS1a" => TP.DDS1a(),
+	"DD1a" => TP.DDS1a(),
 	#"DDS1b" => TP.DDS1b(),
-	"DDS1c" => TP.DDS1c(), 	# DD1b in chenConjugateGradientMethods2024
-	"DDS1d" => TP.DDS1d(),  # DD1c in chenConjugateGradientMethods2024
+	"DD1b" => TP.DDS1c(), 	# DD1b in chenConjugateGradientMethods2024
+	"DD1c" => TP.DDS1d(),  # DD1c in chenConjugateGradientMethods2024
 	"DGO1" => TP.DGO1(),
 	"Far1" => TP.Far1(),
 	"FDSa" => TP.FDS(; num_vars = 10),
@@ -225,7 +229,10 @@ md"## LaTeX Utils"
 """
 Take a result dataframe and format its entries.
 Entries will be `String` or `LaTeXString`."""
-function latexify_df(df)
+function latexify_df(
+	df;
+	comp = (x, y) -> x <= y,
+)
 	ldf = DF.DataFrame(
 		(cname => LaTeXString[] for cname in names(df))...
 	)
@@ -234,7 +241,7 @@ function latexify_df(df)
 		k, t = first(pairs(_row))
 		for (_k, _t) in pairs(_row)
 			ismissing(_t) && continue
-			if ismissing(t) || _t <= t
+			if ismissing(t) || comp(_t, t)
 				k = _k
 				t = _t
 			end
@@ -302,9 +309,10 @@ function make_latex(
 	title = nothing,
 	armijo_mode, 
 	fname_prefix, 
-	crit_tol_abs
+	crit_tol_abs,
+	comp = (x, y) -> x <= y
 )
-	ldf = latexify_df(df)
+	ldf = latexify_df(df; comp)
 
 	modestr = modestring(armijo_mode)
 	fname = "$(fname_prefix)_num_$(resname)_$(modestr)_$(@sprintf("%.e", crit_tol_abs)).tex"
@@ -322,12 +330,14 @@ function run_experiments(;
 	armijo_mode=Val(:all),
 	armijo_constant=1e-4,
 	armijo_factor=0.5,
+	max_iter=1000,
 	crit_tol_abs=1e-6,
 	x_tol_rel=1e-15,
 	log_level=Debug,
 	scale_problems=true,
 	fname_prefix="",
 	make_latex_tables=false,
+	save_dataframes=true
 )
 	global PROBLEMS
 	
@@ -348,10 +358,12 @@ function run_experiments(;
 	end
 
 	problem_names = String[]
+	
+	all_rules = collect(pairs(STEP_RULES))	# collect for Threads
+	tlock = ReentrantLock()					# lock for parallel execution
 	#@progress for (tp_name, tp) in PROBLEMS
 	@progress for tp_name in collect(keys(PROBLEMS))
 		tp = PROBLEMS[tp_name]
-		!(tp_name == "FDSc") && continue
 		
 		@info "Problem $(tp_name)"
 		push!(problem_names, tp_name)
@@ -370,7 +382,8 @@ function run_experiments(;
 		d_gcalls = DF.DataFrame( :x0 => X0s )
 
 		d_solved = Dict{String, Float64}()
-		for (sr_name, step_rule) in pairs(STEP_RULES)
+		
+		Threads.@threads for (sr_name, step_rule) in all_rules
 			@info "\t * $(sr_name)"
 			#!(sr_name == "PRP3") && continue
 
@@ -385,7 +398,7 @@ function run_experiments(;
 
 				res_tuple = run_mop(
 					rtp, x0, step_rule; 
-					crit_tol_abs, log_level, x_tol_rel
+					max_iter, crit_tol_abs, log_level, x_tol_rel,
 				)
 
 				if res_tuple.critval < crit_tol_abs
@@ -400,10 +413,13 @@ function run_experiments(;
 				push!(fcalls, n_fcalls)
 				push!(gcalls, n_gcalls)
 			end
-			d_its[:, sr_name] .= copy(its)
-			d_fcalls[:, sr_name] .= copy(fcalls)
-			d_gcalls[:, sr_name] .= copy(gcalls)
-			d_solved[sr_name] = solved / num_x0 * 100
+
+			lock(tlock) do
+				d_its[:, sr_name] .= copy(its)
+				d_fcalls[:, sr_name] .= copy(fcalls)
+				d_gcalls[:, sr_name] .= copy(gcalls)
+				d_solved[sr_name] = solved / num_x0 * 100
+			end
 		end
 		push!(df_its, agg_subdf(d_its); cols=:subset)
 		push!(df_fcalls, agg_subdf(d_fcalls); cols=:subset)
@@ -415,6 +431,13 @@ function run_experiments(;
 	add_pnames!(df_fcalls, problem_names)
 	add_pnames!(df_gcalls, problem_names)
 	add_pnames!(df_solved, problem_names)
+
+	if save_dataframes
+		jldsave(
+			"dataframes_$(modestring(armijo_mode))_$(@sprintf("%.e", crit_tol_abs)).jld2";
+			df_its, df_fcalls, df_gcalls, df_solved
+		)
+	end
 
 	if make_latex_tables
 		make_latex(
@@ -433,9 +456,10 @@ function run_experiments(;
 			resname = "gcalls", resword = "Number of Grad. Calls",
 		)
 		make_latex(
-			df_its;
+			df_solved;
 			armijo_mode, fname_prefix, crit_tol_abs,
 			resname = "solved", resword = "Solved Percentage",
+			comp = (x, y) -> x >= y
 		)
 	end
 	
@@ -448,6 +472,7 @@ run_experiments(;
 	num_x0=100, 
 	crit_tol_abs=1e-6, 
 	x_tol_rel=1e-10,
+	max_iter=1000,
 	armijo_mode=Val(:all),
 	make_latex_tables = true
 )
@@ -456,7 +481,7 @@ run_experiments(;
 md"## Temporary"
 
 # ╔═╡ bf1fa747-d17e-42f5-b9d3-5dddf535214b
-let tp = TP.FDS(; num_vars = 10)
+let tp = TP.DGO1()
 
 	step_rule = PRPConeProjection(;
 		sz_rule = ArmijoBacktracking(;
@@ -476,25 +501,14 @@ let tp = TP.FDS(; num_vars = 10)
 	ub = TP.upper_variable_bounds(tp)
 
 	x0 = lb .+ (ub .- lb) .* rand(n)
-	#=x0 = [
-		-1.3354559613324848
-		-1.1784562336478448
-		 0.4678102008598066
-		-1.30023612410851
-		-1.2039509060657445
-		 0.28765815961611363
-		-1.9959612649683174
-		-1.9171081885651002
-		-0.4036859382817055
-		-0.3928162012706742
-	]=#
 	
 	rtp = TP.make_scaled(tp, x0)
 	rtp = tp
 	res = run_mop(
 		rtp, x0, step_rule;
-		max_iter=100,
+		max_iter=1000,
 		crit_tol_abs=1e-6,
+		x_tol_rel=1e-10,
 		log_level=Info
 	)
 	display(x0)
@@ -516,6 +530,7 @@ end
 # ╠═427ee390-2ae4-4fed-a801-bcc5e58bc17c
 # ╠═92c3fcc1-79b1-48d6-8f4f-f087562feac9
 # ╠═8564d05c-1c37-4bb8-bbac-9cecf3781e11
+# ╠═e5c0f5ce-5fe6-418f-807d-b701a92f2427
 # ╟─186077e1-3e33-43ab-8dd7-0e2f242a836c
 # ╟─87831221-4496-4f76-866e-7e4e610e1c30
 # ╠═45d78cff-a07e-4f79-96e0-af05e07a0ae9

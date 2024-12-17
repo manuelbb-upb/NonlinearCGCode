@@ -108,36 +108,6 @@ md"We don't want to modify anything provided by the user.
 At the same time, we'd like to count function evaluations.
 We thus wrap the user provided problem."
 
-# ╔═╡ cd6e18ca-f659-4100-a47d-409262660384
-md"Forward metadata methods:"
-
-# ╔═╡ cc255919-7bcd-48c3-8e3b-c86ec365c977
-md"Query or set number of function calls:"
-
-# ╔═╡ dd82f281-a10b-44ba-821a-a56f2923ae8b
-md"### Evaluation"
-
-# ╔═╡ a9b50868-2880-47df-904e-aed3891f73d4
-md"# Algorithm"
-
-# ╔═╡ 03d32a31-9a60-4556-a2e6-b048ab1160bc
-md"## Types and Data"
-
-# ╔═╡ 6773003d-51e6-43b8-bd05-06089bda2872
-md"### Stop Codes"
-
-# ╔═╡ 1a7c4eb1-2981-4a01-8526-37fb9a4ea05a
-@enum STOP_CODE :: Int8 begin
-    STOP_MAX_ITER
-    STOP_BUDGET_FUNCS
-    STOP_BUDGET_GRADS
-    STOP_CRIT_TOL_ABS
-    STOP_X_TOL_REL
-    STOP_X_TOL_ABS
-    STOP_FX_TOL_REL
-    STOP_FX_TOL_ABS
-end
-
 # ╔═╡ 6db3895b-dae5-4d5d-a539-2667f932cf48
 Base.@kwdef struct CountedMOP{
 	mop_wrapped_Type
@@ -157,34 +127,20 @@ function wrap_mop(mop::MOP)
 	return CountedMOP(; mop_wrapped = mop)
 end
 
+# ╔═╡ cd6e18ca-f659-4100-a47d-409262660384
+md"Forward metadata methods:"
+
 # ╔═╡ 955b2796-8279-4831-b12b-8fa091721dd5
 float_type(mop::CountedMOP) = float_type(mop.mop_wrapped)
 
 # ╔═╡ e29f3212-71ce-43f9-96ed-bc1597f2a88c
 dim_in(mop::CountedMOP) = dim_in(mop.mop_wrapped)
 
-# ╔═╡ 35ff7b4a-9bc8-4e26-8371-736eb04e4fba
-function mop_assert_x(mop, x)
-	@assert length(x) == dim_in(mop) "Length of input vector does not match `mop.dim_in`."
-	nothing
-end
-
 # ╔═╡ 5d741ef6-b695-4915-8da6-1a50d943e875
 dim_out(mop::CountedMOP) = dim_out(mop.mop_wrapped)
 
-# ╔═╡ 9c09fc70-c270-4515-a2eb-241650f2c651
-function mop_assert_y(mop, y)
-	@assert length(y) == dim_out(mop) "Length of output vector does not match `mop.dim_out`."
-	nothing
-end
-
-# ╔═╡ 9cf361e5-57f3-48e5-9405-a2c6f5df8b10
-function mop_assert_Dy(mop, Dy)
-	sz_Dy = size(Dy)
-	sz_mop = (dim_out(mop), dim_in(mop))
-	@assert sz_Dy == sz_mop "Size of Jacobian should be $(sz_mop), but is $(sz_Dy)."
-	nothing
-end
+# ╔═╡ cc255919-7bcd-48c3-8e3b-c86ec365c977
+md"Query or set number of function calls:"
 
 # ╔═╡ 0032a05a-3989-4ea0-ba2c-de683f0cbe4b
 num_calls_objectives(mop::CountedMOP) = mop.num_calls_objectives_ref[]
@@ -213,6 +169,50 @@ max_num_calls_objectives!(mop::CountedMOP, val) = (mop.max_num_calls_objectives_
 
 # ╔═╡ d9fee57d-ee9f-4ed7-aa85-9e61472ff4cd
 max_num_calls_jac!(mop::CountedMOP, val) = (mop.max_num_calls_jac_ref[] = val)
+
+# ╔═╡ dd82f281-a10b-44ba-821a-a56f2923ae8b
+md"### Evaluation"
+
+# ╔═╡ 35ff7b4a-9bc8-4e26-8371-736eb04e4fba
+function mop_assert_x(mop, x)
+	@assert length(x) == dim_in(mop) "Length of input vector does not match `mop.dim_in`."
+	nothing
+end
+
+# ╔═╡ 9c09fc70-c270-4515-a2eb-241650f2c651
+function mop_assert_y(mop, y)
+	@assert length(y) == dim_out(mop) "Length of output vector does not match `mop.dim_out`."
+	nothing
+end
+
+# ╔═╡ 9cf361e5-57f3-48e5-9405-a2c6f5df8b10
+function mop_assert_Dy(mop, Dy)
+	sz_Dy = size(Dy)
+	sz_mop = (dim_out(mop), dim_in(mop))
+	@assert sz_Dy == sz_mop "Size of Jacobian should be $(sz_mop), but is $(sz_Dy)."
+	nothing
+end
+
+# ╔═╡ a9b50868-2880-47df-904e-aed3891f73d4
+md"# Algorithm"
+
+# ╔═╡ 03d32a31-9a60-4556-a2e6-b048ab1160bc
+md"## Types and Data"
+
+# ╔═╡ 6773003d-51e6-43b8-bd05-06089bda2872
+md"### Stop Codes"
+
+# ╔═╡ 1a7c4eb1-2981-4a01-8526-37fb9a4ea05a
+@enum STOP_CODE :: Int8 begin
+    STOP_MAX_ITER
+    STOP_BUDGET_FUNCS
+    STOP_BUDGET_GRADS
+    STOP_CRIT_TOL_ABS
+    STOP_X_TOL_REL
+    STOP_X_TOL_ABS
+    STOP_FX_TOL_REL
+    STOP_FX_TOL_ABS
+end
 
 # ╔═╡ 05cd3f07-2e41-4ebf-9cdf-bc32248c0aa5
 function check_budget_objectives(mop)
@@ -817,7 +817,7 @@ function steepest_descent_direction!(d, fw_cache, Dfx)
     ## before scaling `d`, set criticality
     critval = maxdot(Dfx, d)
 	if critval > 0
-		@error "Steepest Descent Direction not strict descent direction, ascent $(critval)."
+		@warn "Steepest Descent Direction not strict descent direction, ascent $(critval)."
 	else
 		critval *= -1
 	end
@@ -1242,18 +1242,6 @@ struct PRPConeProjectionCache{
     Dfx_prev :: Matrix{F}
 end
 
-# ╔═╡ 6ee68a92-ad08-46a7-bde0-c66b131114b3
-"Project `d` on null space of `g` and store in `d⟂`."
-function project_on_ker!(
-    d⊥::AbstractVector, d::AbstractVector, g::AbstractVector
-)
-    @assert length(d⊥) == length(d) == length(g)
-    g_normsq = sum( g.^2 )
-	g_dot_d = LA.dot(g, d)
-    d⊥ .= d .- (g_dot_d / g_normsq) .* g
-    return d⊥
-end
-
 # ╔═╡ c5be6137-f1e5-4dba-be37-ddbe23c3fd1d
 function step!(
     carrays, step_cache::PRPConeProjectionCache, mop, it_index; 
@@ -1299,6 +1287,18 @@ function step!(
     ## compute a stepsize, scale `d`, set `xd .= x .+ d` and values `fxd`
     @unpack sz_cache = ccache
     return stepsize!(carrays, sz_cache, mop; kwargs...)
+end
+
+# ╔═╡ 6ee68a92-ad08-46a7-bde0-c66b131114b3
+"Project `d` on null space of `g` and store in `d⟂`."
+function project_on_ker!(
+    d⊥::AbstractVector, d::AbstractVector, g::AbstractVector
+)
+    @assert length(d⊥) == length(d) == length(g)
+    g_normsq = sum( g.^2 )
+	g_dot_d = LA.dot(g, d)
+    d⊥ .= d .- (g_dot_d / g_normsq) .* g
+    return d⊥
 end
 
 # ╔═╡ 2efdbe51-0ab9-474f-a749-d04c7341feb7
