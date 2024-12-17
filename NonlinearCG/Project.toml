@@ -1,0 +1,15 @@
+name = "NonlinearCG"
+uuid = "0ddb3cd6-068b-4386-abe2-75a2876fc59b"
+authors = ["Manuel Berkemeier <manuel.berkemeier@tu-dortmund.de>"]
+version = "0.0.1"
+
+[deps]
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
+
+[compat]
+UnPack = "~1.0.2"

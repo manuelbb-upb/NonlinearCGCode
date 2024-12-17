@@ -1,0 +1,48 @@
+{
+  "nodes": {
+    "nix-matlab-ld": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1733845684,
+        "narHash": "sha256-AWV1zauAXNK6ZJnnyLzUDighIuUvPfu3JBG0mLEL7NA=",
+        "owner": "manuelbb-upb",
+        "repo": "nix-matlab-ld",
+        "rev": "39d98cdcac6dc39ffbe538abbbaf1b2db7559489",
+        "type": "github"
+      },
+      "original": {
+        "owner": "manuelbb-upb",
+        "repo": "nix-matlab-ld",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1733759999,
+        "narHash": "sha256-463SNPWmz46iLzJKRzO3Q2b0Aurff3U1n0nYItxq7jU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "a73246e2eef4c6ed172979932bc80e1404ba2d56",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nix-matlab-ld": "nix-matlab-ld",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

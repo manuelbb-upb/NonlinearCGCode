@@ -1,0 +1,10 @@
+[deps]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
+LaTeXTabulars = "266f59ce-6e72-579c-98bb-27b39b5c037e"
+NonlinearCG = "0ddb3cd6-068b-4386-abe2-75a2876fc59b"
+PlutoLinks = "0ff47ea0-7a50-410d-8455-4348d5de0420"
+ProgressLogging = "33c8b6b6-d38a-422a-b730-caa89a2f386c"
+TestProblems = "f613b176-dd9b-41bb-914f-d310fda86fca"
