@@ -147,15 +147,15 @@ struct FrankWolfeCache{T<:AbstractFloat}
 	α :: Vector{T}	# solution vector
 	_α :: Vector{T}	# temporary vector
 	M :: Matrix{T}	# symmetric matrix for gradient products
-	u :: Vector{T}	# seed vector
+	#u :: Vector{T}	# seed vector
 end
 
 function init_frank_wolfe_cache(::Type{T}, num_grads) where T<:AbstractFloat
 	α = zeros(num_grads)
 	_α = similar(α)
 	M = zeros(num_grads, num_grads)
-	u = similar(α)
-	return FrankWolfeCache(α, _α, M, u)
+	#u = similar(α)
+	return FrankWolfeCache(α, _α, M)
 end
 
 # We initialize the cache from the Jacobian:
@@ -171,9 +171,9 @@ end
 function frank_wolfe_multidir_dual!(
 	fw_cache::FrankWolfeCache, jac::AbstractMatrix; kwargs...
 )
-	@unpack α, _α, M, u = fw_cache
+	@unpack α, _α, M = fw_cache
 	return frank_wolfe_multidir_dual!(
-		α, _α, M, u, jac; kwargs...
+		α, _α, M, jac; kwargs...
 	)
 end
 
@@ -182,13 +182,14 @@ function frank_wolfe_multidir_dual!(
 	α :: AbstractVector,	# solution vector
 	_α :: AbstractVector,	# temporary vector
 	M :: AbstractMatrix,	# symmetric product matrix for gradients
-	u :: AbstractVector,
+	## u :: AbstractVector,
 	jac :: AbstractMatrix; 
-	max_iter=10_000, 
-	eps_rel= let et=eltype(α); et <: AbstractFloat ? sqrt(eps(et)) : 1e-10 end,
-	eps_abs=0, 
+	max_iter=10_000_000,
+	eps_rel= let et=eltype(α); et <: AbstractFloat ? sqrt(eps(et)) : sqrt(eps(Float64)) end,
+	eps_abs=0,
+	ensure_descent=true,
 )
-	num_grads = size(jac, 1)
+	num_grads, num_vars = size(jac)
 
 	## 1) Initialize ``α`` vector. There are smarter ways to do this...
 	α .= 1/num_grads
@@ -202,23 +203,53 @@ function frank_wolfe_multidir_dual!(
 	end
 
 	## 3) Solver iteration
-	for _=1:max_iter
+	do_break = false
+	_α .= α
+	LA.mul!(α, M, _α)
+	tval, t = findmin( α )
+
+	it = 0
+	for outer it=1:max_iter
+		#=
 		_α .= α
 		LA.mul!(α, M, _α)
-		t = argmin( α )
-		v = _α
-		u .= 0
-		u[t] = 1
-		
-		γ, _ = min_chull2(M, v, u)
+		tval, t = findmin( α )
+		=#
 
-		@. α = (1-γ) * _α
+		a = _α'α
+		b = tval
+		c = M[t, t]
+		γ, _ = min_quad(a,b,c)
+
+		#γ, _ = min_chull2(M, v, u)
+
+		α .= _α
+		α .*= (1-γ)
 		α[t] += γ
 
-		abs_change = sum( abs.( _α .- α ) ) 
-		if abs_change <= eps_abs || abs_change <= eps_rel * sum( abs.(_α) )
+		abs_change = sum( abs.( _α .- α ) )
+		abs_rhs = sum( abs.(_α) )
+
+		_α .= α
+		LA.mul!(α, M, _α)
+		tval, t = findmin( α )
+
+		if abs_change <= eps_abs || abs_change <= eps_rel * abs_rhs
+			if ensure_descent
+				do_break = (tval >= 0)
+			else
+				do_break = true
+			end
+		end
+
+		if do_break
+			α .= _α
 			break
 		end
+
+	end
+	if !do_break
+		α .= _α
 	end
 	α *= -1
 

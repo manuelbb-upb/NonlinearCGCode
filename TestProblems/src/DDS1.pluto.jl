@@ -16,28 +16,6 @@ md"# DDS1"
 # ╔═╡ 32a26f15-7bed-4daf-839b-626d3a6fa290
 md"References:"
 
-# ╔═╡ 572bd70e-cef4-4711-92a4-937a354f3f23
-md"""
-```
-@article{fliegeNewtonsMethodMultiobjective2009,
-  title = {Newton's {{Method}} for {{Multiobjective Optimization}}},
-  author = {Fliege, J. and Drummond, L. M. Graña and Svaiter, B. F.},
-  date = {2009-01},
-  journaltitle = {SIAM Journal on Optimization},
-  shortjournal = {SIAM J. Optim.},
-  volume = {20},
-  number = {2},
-  pages = {602--626},
-  issn = {1052-6234, 1095-7189},
-  doi = {10.1137/08071692X},
-  url = {http://epubs.siam.org/doi/10.1137/08071692X},
-  urldate = {2024-12-12},
-  langid = {english}
-}
-
-```
-"""
-
 # ╔═╡ fe514db9-330b-40e6-8258-f4e908bece52
 Base.@kwdef struct DDS1 <: AbstractTestProblem
 	L :: Float64 = -20
@@ -124,18 +102,23 @@ end
 # ╔═╡ 9e9838f8-b8a4-40d5-af21-bb7c2e0b9d43
 # ╠═╡ skip_as_script = true
 #=╠═╡
-let
-	tp = DDS1d()
+let	tp = DDS1d();
+	
 	num_vars = num_variables(tp)
 	num_objs = num_objectives(tp)
-	x = ones(num_vars)
+
+	lb = lower_variable_bounds(tp)
+	ub = upper_variable_bounds(tp)
+	
+	x = lb .+ (ub .- lb) .* rand(num_vars)
 	y = zeros(num_objs)
 	Dy = zeros(num_objs, num_vars)
 	objectives! = IPObjectivesClosure(tp)
 	jac! = IPJacClosure(tp)
 	objectives!(y, x)
 	jac!(Dy, x)
-	y, Dy
+	
+	Dy .- fd_jac(tp, x) |> maximum
 end
   ╠═╡ =#
 
@@ -328,7 +311,6 @@ version = "17.4.0+2"
 # ╟─a8b03a74-b867-11ef-064c-ad2fc737eb46
 # ╟─32a26f15-7bed-4daf-839b-626d3a6fa290
 # ╠═013d6079-1dff-410e-8336-87cdbe1addf6
-# ╟─572bd70e-cef4-4711-92a4-937a354f3f23
 # ╠═fe514db9-330b-40e6-8258-f4e908bece52
 # ╠═946c8032-ddca-4d80-b1fd-b8d487d1852a
 # ╠═f35fe19c-ba76-446d-839a-665ca5dbad5f

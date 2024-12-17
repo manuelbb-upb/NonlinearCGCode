@@ -30,21 +30,21 @@ begin
 	_mmr_has_refs = true
 end
 
-# ╔═╡ fe514db9-330b-40e6-8258-f4e908bece52
-Base.@kwdef struct MMR5 <: AbstractMMRTestProblem
-	num_vars :: Int = 50
-end
-
 # ╔═╡ 9defcaaf-1b35-4e5f-b775-2ce944756fba
 # ╠═╡ skip_as_script = true
 #=╠═╡
 _mmr_has_refs && Markdown.parse(printrefs(MMR5))
   ╠═╡ =#
 
+# ╔═╡ fe514db9-330b-40e6-8258-f4e908bece52
+Base.@kwdef struct MMR5 <: AbstractMMRTestProblem
+	num_vars :: Int = 50
+end
+
 # ╔═╡ 14d311bf-8a1f-4e0e-ac03-8a632e3d12a9
 begin
 	MMR5a() = MMR5(50)
-	MMR5b() = MMR5(100)
+	MMR5b() = MMR5(200)
 	MMR5c() = MMR5(500)
 end
 
@@ -103,7 +103,7 @@ let	tp = MMR5();
 	objectives!(y, x)
 	jac!(Dy, x)
 	
-	Dy .- fd_jac(tp, x)
+	Dy .- fd_jac(tp, x) |> maximum
 end
   ╠═╡ =#
 

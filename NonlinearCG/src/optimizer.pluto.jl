@@ -723,6 +723,7 @@ function armijo_backtrack!(
     if !(stop_code isa STOP_CODE)
         stop_code = sz
     end
+
     return stop_code 
 end
 
@@ -802,14 +803,24 @@ end
 
 # ╔═╡ e4148017-12b9-4084-a88a-94c4f325ddf2
 function steepest_descent_direction!(d, fw_cache, Dfx)
+
 	## compute (negative) KKT multipliers for steepest descent direction
-    α = frank_wolfe_multidir_dual!(fw_cache, Dfx)
+    α = frank_wolfe_multidir_dual!(
+		fw_cache, Dfx;
+		eps_rel = 1e-4,
+		ensure_descent = true
+	)
     
     ## use these to set steepest descent direction `d`
     LA.mul!(d, Dfx', α)
 
     ## before scaling `d`, set criticality
-    critval = abs(maxdot(Dfx, d))
+    critval = maxdot(Dfx, d)
+	if critval > 0
+		@error "Steepest Descent Direction not strict descent direction, ascent $(critval)."
+	else
+		critval *= -1
+	end
 	return critval
 end
 
@@ -907,11 +918,12 @@ function step!(
  
     ## modify carrays.d to be steepest descent direction δₖ
 	## store ‖δₖ‖^2 in ccache.criticality_ref[]
-    sd_normsq = steepest_descent_direction!(carrays, ccache)    
+    steepest_descent_direction!(carrays, ccache)
+	sd_normsq = ccache.criticality_ref[]
 
     @unpack d, Dfx = carrays
     @unpack d_prev, wolfe_constant = step_cache
-    if it_index > 1
+    if it_index > 1 && sd_normsq > 0
         ## check wolfe condition at unscaled direction
         fprev_dprev = step_cache.criticality_ref[]  # -max( ⟨∇fᵢ(xₖ₋₁), dₖ₋₁⟩ )
         upper_bound = wolfe_constant * fprev_dprev
@@ -986,6 +998,13 @@ function fr_fractionallp_optindex(Dfx, d_prev, d)
 			w = _w
 		end
 	end
+	if w == 0
+		@error "Could not determine optimal index `w`!."
+		w = 1
+		g = @view(Dfx[w, :])
+		w_g_sd = LA.dot(g, d)
+		w_g_dprev = LA.dot(g, dprev)
+	end
 	return w, w_g_dprev, w_g_sd
 end
 
@@ -1003,7 +1022,7 @@ function step!(
     @unpack d, Dfx = carrays
     @unpack d_prev, Dprev_dprev, constant = step_cache
 
-    if it_index > 1
+    if it_index > 1 && ccache.criticality_ref[] > 0
         ## Find optimal index `w`
 		(w, w_g_dprev, w_g_sd) = fr_fractionallp_optindex(Dfx, d_prev, d)
         ## use index `w` to define `θ` and `β`
@@ -1020,7 +1039,7 @@ function step!(
 	else
 		d .*= constant
     end
-
+	
     ## before scaling, store data for next iteration
     step_cache.criticality_ref[] = abs(maxdot(Dfx, d))
     d_prev .= d
@@ -1078,7 +1097,7 @@ function step!(
 	#LA.mul!(tmp_vec, Dfx, d)	# Dₖ δₖ
 	tmp_vec .= d 
 	
-    if it_index > 1
+    if it_index > 1 && ccache.criticality_ref[] > 0
         ## Find optimal index `w`
 		(w, w_g_dprev, w_g_sd) = fr_fractionallp_optindex(Dfx, d_prev, d)
         ## use index `w` to define `θ` and `β` 
@@ -1160,7 +1179,7 @@ function step!(
 
 	LA.mul!(D_sd, Dfx, d)	# Dₖ δₖ
 	
-    if it_index > 1
+    if it_index > 1 && sd_normsq > 0
         ## Find switching index `w`
 		D_dprev = maxdot(Dfx, d_prev)
 		if D_dprev >= 0
@@ -1250,9 +1269,10 @@ function step!(
 
     @unpack d, Dfx = carrays
     @unpack d_prev, d_opt, d_orth, Dfx_prev = step_cache
-   
-    if it_index > 1
-        sd_normsq = ccache.criticality_ref[]    # -𝔣(δₖ, xₖ)
+
+	sd_normsq = ccache.criticality_ref[]    # -𝔣(δₖ, xₖ)
+
+    if it_index > 1 && sd_normsq > 0
         g_prev_sd = maxdot(Dfx_prev, d)         # 𝔣(δₖ, xₖ₋₁)
         β = (g_prev_sd + sd_normsq) / sd_prev_normsq
 
@@ -1271,7 +1291,7 @@ function step!(
             d .+= d_opt
         end
     end
-    
+
     ## before scaling, store data for next iteration
     step_cache.criticality_ref[] = abs(maxdot(Dfx, d))
     d_prev .= d
@@ -1437,7 +1457,7 @@ function step!(
     @unpack d, Dfx = carrays
     @unpack sd_prev, d_prev, y = step_cache
    	#@show d
-    if it_index > 1
+    if it_index > 1 && ccache.criticality_ref[] > 0
         ## set difference vector
         ### at this point, `sd_prev` holds δₖ₋₁
         y .= sd_prev .- d     # yₖ = δₖ₋₁ - δₖ
@@ -1611,6 +1631,7 @@ function optimize_after_init(
     stop_code = objectives_and_jac!(fx, Dfx, mop, x)
     it_index = 1
 	callback_called = false
+	critval = Inf
     while true
         callback_called = false
 		@ignorebreak stop_code 	# exhausted budget even before first iteration ?
@@ -1676,6 +1697,7 @@ function optimize_after_init(
 
     return (; 
         x, fx, carrays, step_cache, stop_code, callback,
+		critval,
 		num_its = it_index - 1, 	# number of finished iterations
         num_func_calls = num_calls_objectives(mop),
         num_grad_calls = num_calls_jac(mop)
