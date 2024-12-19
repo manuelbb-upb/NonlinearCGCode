@@ -184,7 +184,7 @@ function frank_wolfe_multidir_dual!(
 	M :: AbstractMatrix,	# symmetric product matrix for gradients
 	## u :: AbstractVector,
 	jac :: AbstractMatrix; 
-	max_iter=50_000,
+	max_iter=25_000,
 	eps_rel= let et=eltype(α); et <: AbstractFloat ? sqrt(eps(et)) : sqrt(eps(Float64)) end,
 	eps_abs=0,
 	ensure_descent=true,
@@ -253,5 +253,5 @@ function frank_wolfe_multidir_dual!(
 	end
 	α *= -1
 
-	return α
+	return α, tval
 end

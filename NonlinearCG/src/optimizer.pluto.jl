@@ -512,7 +512,10 @@ end
 
 # ╔═╡ c0642afa-96f1-49d4-8cae-16d34c5b62e3
 md"Mutating stepsize function.
-A `stepsize!` method must correctly set `d`, `xd` and `fxd`."
+A `stepsize!` method must correctly set `d`, `xd` and `fxd`.
+It should return `true` if the step is not zero and `false` otherwise.
+The function may also return a `STOP_CODE`.
+"
 
 # ╔═╡ 4ae8c923-8af7-4d71-9354-1be96b5d0cfc
 function stepsize!(carrays, ::AbstractStepsizeCache, mop; kwargs...)::Nothing
@@ -543,7 +546,11 @@ function stepsize!(carrays, sz_cache::FixedStepsizeCache, mop; kwargs...)
     @unpack d, x, xd, fxd = carrays
     d .*= sz
     xd .= x .+ d
-    return objectives!(fxd, mop, xd)
+    stop_code = objectives!(fxd, mop, xd)
+	if !(isa(stop_code, STOP_CODE))
+		return sum( d.^2 ) > 0
+	end
+	return stop_code
 end
 
 # ╔═╡ cb7497f7-1b31-4549-a6f4-019a90443ed1
@@ -594,6 +601,28 @@ end
 
 # ╔═╡ 4dba2ef2-1c12-4e54-9557-0c50a98c6d74
 md"#### Backtracking Functions"
+
+# ╔═╡ fc572420-e729-4bf8-9060-771b37abbd21
+function _armijo_iszerostep(mode::Val{:all}, Dfx, d)
+	for g in eachrow(Dfx)
+		if LA.dot(g, d) >= 0
+			return true
+		end
+	end
+	return false
+end
+
+# ╔═╡ 00d2b606-72ef-415a-ba15-0d1e7756284d
+function _armijo_iszerostep(mode::Union{Val{:any}, Val{:max}}, Dfx, d)
+	any_descent = false
+	for g in eachrow(Dfx)
+		if LA.dot(g, d) < 0
+			any_descent = true
+			break
+		end
+	end
+	return !any_descent
+end
 
 # ╔═╡ f27c17a3-dc89-4041-9555-940dbfdefcdc
 function _armijo_rhs(is_modified::Val{false}, d_norm2_sq, sz, constant)
@@ -648,7 +677,7 @@ function armijo_backtrack!(
     d, xd, fxd,
 	## not-modified
     mop,
-    x, fx,
+    x, fx, Dfx,
     factor, constant, sz0, mode, lhs_vec,
     is_modified :: Union{Val{true}, Val{false}} = Val{false}();
     x_tol_abs = 0,
@@ -664,6 +693,10 @@ function armijo_backtrack!(
 	d_norm2_sq = sum( d.^2 )
     zero_step = d_norm2_sq <= 0
     stop_code = nothing
+
+	if !zero_step
+		zero_step = _armijo_iszerostep(mode, Dfx, d)
+	end		
     
     if !zero_step
 		sz = sz0
@@ -721,7 +754,7 @@ function armijo_backtrack!(
     end
 
     if !(stop_code isa STOP_CODE)
-        stop_code = sz
+        stop_code = !zero_step
     end
 
     return stop_code 
@@ -732,10 +765,10 @@ function stepsize!(
     carrays, sz_cache::ArmijoBacktrackingCache, mop;
     kwargs...
 )
-    @unpack d, xd, fxd, x, fx = carrays
+    @unpack d, xd, fxd, x, fx, Dfx = carrays
     @unpack factor, constant, sz0, mode, is_modified, lhs_vec = sz_cache
     return armijo_backtrack!(
-        d, xd, fxd, mop, x, fx, factor, constant, sz0, mode, lhs_vec, is_modified;
+        d, xd, fxd, mop, x, fx, Dfx, factor, constant, sz0, mode, lhs_vec, is_modified;
         kwargs...
     )
 end
@@ -805,7 +838,7 @@ end
 function steepest_descent_direction!(d, fw_cache, Dfx)
 
 	## compute (negative) KKT multipliers for steepest descent direction
-    α = frank_wolfe_multidir_dual!(
+    α, _ = frank_wolfe_multidir_dual!(
 		fw_cache, Dfx;
 		eps_rel = 1e-4,
 		ensure_descent = true
@@ -961,7 +994,7 @@ Base.@kwdef struct FletcherReevesFractionalLP1{
 } <: AbstractStepRule
     sz_rule :: sz_ruleType = ArmijoBacktracking(; is_modified=Val{true}())
     critval_mode :: Union{Val{:sd}, Val{:cg}} = Val{:sd}()
-    constant :: F = 1 + 1e-3
+    constant :: F = 1.1
 end
 
 # ╔═╡ caefad63-308c-447a-8d47-93a8921afd81
@@ -1060,7 +1093,7 @@ Base.@kwdef struct FletcherReevesFractionalLP2{
 } <: AbstractStepRule
     sz_rule :: sz_ruleType = ArmijoBacktracking(; is_modified=Val{true}())
     critval_mode :: Union{Val{:sd}, Val{:cg}} = Val{:sd}()
-    constant :: F = 1 + 1e-3
+    constant :: F = 1.1
 end
 
 # ╔═╡ b12e735e-8411-4c4b-b0de-b5d099fddc42
@@ -1629,18 +1662,19 @@ function optimize_after_init(
 
 	## update `fx` as well as `Dfx`
     stop_code = objectives_and_jac!(fx, Dfx, mop, x)
-    it_index = 1
+
+	it_index = 0
 	callback_called = false
 	critval = Inf
     while true
         callback_called = false
 		@ignorebreak stop_code 	# exhausted budget even before first iteration ?
 
-		## check number of iterations
-        @ignorebreak stop_code = it_index > max_iter ? STOP_MAX_ITER : nothing
-        
+		## check iteration budget
+		@ignorebreak stop_code = it_index < max_iter ? nothing : STOP_MAX_ITER
+		
         @logmsg log_level """#========================================#
-        Iteration $(it_index)
+        Iteration $(it_index + 1)
         x  = $(pretty_row_vec(x))
         fx = $(pretty_row_vec(fx))"""
 
@@ -1650,47 +1684,54 @@ function optimize_after_init(
             carrays, step_cache, mop, it_index;
             crit_tol_abs, x_tol_rel, x_tol_abs, fx_tol_rel, fx_tol_abs
         )
-        ## derive criticality
-        critval = criticality(carrays, step_cache)
+		
+		nonzero_step = stop_code
+		## extract criticality:
+		critval = criticality(carrays, step_cache)
 
-		## update displacement vector
-		@. y = fxd - fx
-       
+		## compute test values **before** updating `x`, `fx` etc.
+		x_norm = LA.norm(x, Inf)
+        fx_norm = LA.norm(fx, Inf)
+		
+		if nonzero_step
+			## update displacement vector
+			@. y = fxd - fx
+			## compute test values **before** updating `x`, `fx` etc.
+			x_change = LA.norm(d, Inf)
+        	fx_change = LA.norm(y, Inf)
+		else
+			y .= 0
+			fx_change = x_change = 0
+		end
+		@logmsg log_level """
+        critval   = $(critval)
+        x_change  = $(x_change)
+        fx_change = $(fx_change)"""
+		       
       	## before updates, do callback, enabling break before Jacobian call
-		## also, this way, callback has access to both current and next values
+		## this way, callback has access to both current and next values
         @ignorebreak stop_code = begin
             callback_called = true
             exec_callback(callback, it_index, carrays, mop, step_cache, stop_code)
         end
-		 
-        ## compute test values **before** updating `x`, `fx` etc.
-		x_norm = LA.norm(x, Inf)
-        fx_norm = LA.norm(fx, Inf)
-		x_change = LA.norm(d, Inf)
-        fx_change = LA.norm(y, Inf)
-		
-		@logmsg log_level """\n
-        critval   = $(critval)
-        x_change  = $(x_change)
-        fx_change = $(fx_change)"""
-
-		## update iterates and Jacobian
-		x .= xd
-        fx .= fxd
-		@ignorebreak stop_code = jac!(Dfx, mop, x)
-		     
-        ## check other stopping criteria
+		## check other stopping criteria to see if updating makes any sense
 		@ignorebreak stop_code = critval < crit_tol_abs ? STOP_CRIT_TOL_ABS : nothing
 		
         @ignorebreak stop_code = x_change < x_tol_abs ? STOP_X_TOL_ABS : nothing
         @ignorebreak stop_code = x_change < x_tol_rel * x_norm ?  STOP_X_TOL_REL : nothing
 
         @ignorebreak stop_code = fx_change < fx_tol_abs ? STOP_FX_TOL_ABS : nothing
-        @ignorebreak stop_code = fx_change < x_tol_rel * fx_norm ? STOP_FX_TOL_REL : nothing
+        @ignorebreak stop_code = fx_change < x_tol_rel * fx_norm ? STOP_FX_TOL_REL : nothing		
+		## update iterates and Jacobian
+		x .= xd
+        fx .= fxd
+		@ignorebreak stop_code = jac!(Dfx, mop, x)
 
-		## proceed to next iteration      
-        it_index += 1
-    end
+		## iteration completed, increase counter
+		it_index += 1
+    end#while true
+	@logmsg log_level "STOP, it_index = $(it_index), stop_code = $(stop_code)."
+	
     if !callback_called
         exec_callback(callback, it_index, carrays, mop, step_cache, stop_code)
     end
@@ -1698,7 +1739,7 @@ function optimize_after_init(
     return (; 
         x, fx, carrays, step_cache, stop_code, callback,
 		critval,
-		num_its = it_index - 1, 	# number of finished iterations
+		num_its = it_index, 	# number of finished iterations
         num_func_calls = num_calls_objectives(mop),
         num_grad_calls = num_calls_jac(mop)
     )
@@ -3615,6 +3656,8 @@ version = "3.6.0+0"
 # ╠═14cf9e93-8769-4de5-a076-4e8237e03e1f
 # ╟─4dba2ef2-1c12-4e54-9557-0c50a98c6d74
 # ╠═92e74936-9522-480d-baf6-6ff1836e2c43
+# ╠═fc572420-e729-4bf8-9060-771b37abbd21
+# ╠═00d2b606-72ef-415a-ba15-0d1e7756284d
 # ╠═f27c17a3-dc89-4041-9555-940dbfdefcdc
 # ╠═f79a2daa-1c83-453c-9d8f-2933b9aee56b
 # ╠═0a224393-3dad-415d-a009-4d29a5bcf0af

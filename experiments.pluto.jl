@@ -4,6 +4,18 @@
 using Markdown
 using InteractiveUtils
 
+# This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
+macro bind(def, element)
+    #! format: off
+    quote
+        local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
+        local el = $(esc(element))
+        global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
+        el
+    end
+    #! format: on
+end
+
 # ╔═╡ 2cc74d18-b87d-11ef-0afe-077b7f4108d3
 # ╠═╡ show_logs = false
 begin
@@ -11,6 +23,7 @@ begin
 	Pkg.activate(@__DIR__)
 	Pkg.develop(; url=joinpath(@__DIR__, "NonlinearCG"))
 	Pkg.develop(; url=joinpath(@__DIR__, "TestProblems"))
+	Pkg.add("PlutoHooks")
 	Pkg.add("PlutoLinks")
 	Pkg.add("PlutoUI")
 	Pkg.add("DataFrames")
@@ -23,8 +36,14 @@ end
 
 # ╔═╡ 61eae34f-e8d3-4afb-ac6f-f6b33096373f
 begin
-	using PlutoUI: TableOfContents, Button
+	using PlutoUI: TableOfContents
 	TableOfContents()
+end
+
+# ╔═╡ c5f5b5ff-443c-4e53-9a32-48235b27cc1e
+begin
+	using PlutoHooks: @use_memo
+	using PlutoUI: CounterButton
 end
 
 # ╔═╡ 52d795cf-1963-4f6b-895c-0d663fab2451
@@ -46,6 +65,7 @@ using JLD2
 md"## Dependencies"
 
 # ╔═╡ cb0f7e62-2f83-4487-b5b8-7a9ee2f7df87
+# ╠═╡ show_logs = false
 import PlutoLinks: @revise
 
 # ╔═╡ 0735af1b-d5a8-4906-92be-5edbffe58465
@@ -112,7 +132,8 @@ PROBLEMS = OrderedDict{String, Any}(
 	"MMR5a" => TP.MMR5a(),
 	"MMR5b" => TP.MMR5b(),
 	"MMR5c" => TP.MMR5c(),
-	"MOP2" => TP.MOP2(),
+	"MOP2" => TP.MOP2(; L=-2, U=2), 	# [-4, 4] in chenConjugateGradientMethods2024
+										# but gradients too flat near bounds
 	"MOP3" => TP.MOP3(),
 	"MOP5" => TP.MOP5(),
 	"PNR" => TP.PNR(),
@@ -152,12 +173,12 @@ function make_step_rule_dict(;
 		"PRP3" => PRP3(;sz_rule),
 		"PRPP" => PRPConeProjection(;sz_rule),		
 		"FRR" => FletcherReevesRestart(;sz_rule),
-		"FRF1_1" => FletcherReevesFractionalLP1(;sz_rule),
-		"FRF1_10" => FletcherReevesFractionalLP1(;sz_rule, constant=10),
-		"FRF2_1" => FletcherReevesFractionalLP2(;sz_rule),
-		"FRF2_10" => FletcherReevesFractionalLP2(;sz_rule, constant=10),
-		"FRBO" => FletcherReevesBalancingOffset(;sz_rule),
-		"FRBO_01" => FletcherReevesBalancingOffset(;sz_rule, c_gamma=0.1)
+		"FRF1a" => FletcherReevesFractionalLP1(;sz_rule),
+		"FRF1b" => FletcherReevesFractionalLP1(;sz_rule, constant=10),
+		"FRF2a" => FletcherReevesFractionalLP2(;sz_rule),
+		"FRF2b" => FletcherReevesFractionalLP2(;sz_rule, constant=10),
+		"FRBOa" => FletcherReevesBalancingOffset(;sz_rule),
+		"FRBOb" => FletcherReevesBalancingOffset(;sz_rule, c_gamma=0.1)
 	)
 	return step_rules
 end
@@ -207,9 +228,9 @@ md"### Helpers"
 md"Initialize an empty result dataframe, columns indexed by step rule labels:"
 
 # ╔═╡ 81c8bd42-831c-4d11-a742-27656176a9e5
-function result_dataframe(step_rule_dict)
+function result_dataframe(step_rule_names)
 	return DF.DataFrame(
-		(cname => Float64[] for cname in keys(step_rule_dict))...
+		(cname => Float64[] for cname in step_rule_names)...
 	)
 end
 
@@ -222,6 +243,12 @@ modestring(::Val{F})where F="$(string(F))"
 # ╔═╡ ef16b140-9921-466a-8eed-6087a1c413e4
 md"## Run"
 
+# ╔═╡ d453e7aa-9bba-4681-872b-b73b8c6c79fa
+md"### Run Button"
+
+# ╔═╡ 4cb1d9b6-76e6-46e8-a918-8ae8e02ea1db
+@bind run1 CounterButton("Run Experiments")
+
 # ╔═╡ 9b68cb0b-f2d1-4872-b186-dc0304cf9a40
 md"## LaTeX Utils"
 
@@ -231,19 +258,38 @@ Take a result dataframe and format its entries.
 Entries will be `String` or `LaTeXString`."""
 function latexify_df(
 	df;
-	comp = (x, y) -> x <= y,
+	comp = :min_best,
+	skipcols = [],
 )
 	ldf = DF.DataFrame(
 		(cname => LaTeXString[] for cname in names(df))...
 	)
 	for row = eachrow(df)
 		_row = row[2:end]
-		k, t = first(pairs(_row))
-		for (_k, _t) in pairs(_row)
-			ismissing(_t) && continue
-			if ismissing(t) || comp(_t, t)
-				k = _k
-				t = _t
+		nums = []
+		for (cname, entry) in pairs(row)
+			!(entry isa Number) && continue
+			(cname in skipcols) && continue
+			push!(nums, entry)
+		end
+		unique!(nums)
+
+		rmin, rmax = extrema(nums)
+		rw = rmax - rmin
+		
+		if comp == :min_best
+			if iszero(rw)
+				colorfunc = n -> 20
+			else
+				# smallest value should be darkest, have value 50
+				# biggest value should be lightest, have value 20
+				colorfunc = n -> floor(Int, 20 + 30 * ((n - rmin) / rw))
+			end
+		else
+			if iszero(rw)
+				colorfunc = n -> 20
+			else
+				colorfunc = n -> floor(Int, 50 - 30 * ((n - rmin) / rw))
 			end
 		end
 		new_row = Dict()
@@ -258,11 +304,12 @@ function latexify_df(
 				continue
 			end
 			_j = @sprintf("%g", j)
-			if j==t
-				new_row[i] = L"\mathbf{%$_j}"
-			else
-				new_row[i] = L"%$_j"
+			if i in skipcols
+				#new_row[i] = L"%$(_j)"
+				new_row[i] = LaTeXString("\\cellcolor{black!55}\$$(_j)\$")
+				continue
 			end
+			new_row[i] = LaTeXString("\\cellcolor{black!$(colorfunc(j))}\$$(_j)\$") #L"\mathbf{%$_j}"
 		end
 		push!(ldf, new_row)
 	end
@@ -310,9 +357,10 @@ function make_latex(
 	armijo_mode, 
 	fname_prefix, 
 	crit_tol_abs,
-	comp = (x, y) -> x <= y
+	comp = :min_best,
+	skipcols = []
 )
-	ldf = latexify_df(df; comp)
+	ldf = latexify_df(df; comp, skipcols)
 
 	modestr = modestring(armijo_mode)
 	fname = "$(fname_prefix)_num_$(resname)_$(modestr)_$(@sprintf("%.e", crit_tol_abs)).tex"
@@ -322,6 +370,36 @@ function make_latex(
 	end
 
 	return latex_code(ldf; io = fname, title)
+end
+
+# ╔═╡ a18e5d2d-0b5a-4c6d-bbd6-eac4661c36d6
+function result_latex_tables(
+	df_its, df_fcalls, df_gcalls, df_solved;
+	armijo_mode, fname_prefix, crit_tol_abs,
+)
+	make_latex(
+		df_its;
+		armijo_mode, fname_prefix, crit_tol_abs,
+		resname = "its", resword = "Number of Iterations",
+		skipcols = [:max,]
+	)
+	make_latex(
+		df_fcalls;
+		armijo_mode, fname_prefix, crit_tol_abs,
+		resname = "fcalls", resword = "Number of Func. Calls",
+	)
+	make_latex(
+		df_gcalls;
+		armijo_mode, fname_prefix, crit_tol_abs,
+		resname = "gcalls", resword = "Number of Grad. Calls",
+	)
+	make_latex(
+		df_solved;
+		armijo_mode, fname_prefix, crit_tol_abs,
+		resname = "solved", resword = "Solved Percentage",
+		comp = :max_best
+	)
+	return nothing
 end
 
 # ╔═╡ b8a46fb4-c976-4681-81e5-daa98cedf53b
@@ -337,129 +415,133 @@ function run_experiments(;
 	scale_problems=true,
 	fname_prefix="",
 	make_latex_tables=false,
-	save_dataframes=true
+	save_dataframes=true,
+	overwrite=true
 )
 	global PROBLEMS
+
+	if max_iter isa Number
+		max_iter_func = n -> max_iter
+	else
+		max_iter_func = max_iter
+	end
 	
 	Random.seed!(1618)
 
-	STEP_RULES = make_step_rule_dict(; armijo_mode, armijo_constant, armijo_factor)
+	res_fpath = "dataframes_$(modestring(armijo_mode))_$(@sprintf("%.e", crit_tol_abs)).jld2"
 
-	df_solved = result_dataframe(STEP_RULES)
-	df_its = result_dataframe(STEP_RULES)
-	df_fcalls = result_dataframe(STEP_RULES)
-	df_gcalls = result_dataframe(STEP_RULES)
+	if overwrite || !isfile(res_fpath)
 
-	agg_subdf(sdf) = first(DF.combine(sdf, DF.Not(:x0) .=> DF.median; renamecols=false))
-
-	add_pnames!(df, problem_names) = begin
-		df.Problem .= problem_names
-		DF.select!(df, "Problem", DF.Not("Problem"))
-	end
-
-	problem_names = String[]
+		STEP_RULES = make_step_rule_dict(; armijo_mode, armijo_constant, armijo_factor)
 	
-	all_rules = collect(pairs(STEP_RULES))	# collect for Threads
-	tlock = ReentrantLock()					# lock for parallel execution
-	#@progress for (tp_name, tp) in PROBLEMS
-	@progress for tp_name in collect(keys(PROBLEMS))
-		tp = PROBLEMS[tp_name]
-		
-		@info "Problem $(tp_name)"
-		push!(problem_names, tp_name)
-		
-		num_vars = TP.num_variables(tp)
-		lb = TP.lower_variable_bounds(tp)
-		ub = TP.upper_variable_bounds(tp)
-
-		wb = ub .- lb
-		X0 = lb .+ wb .* rand(num_vars, num_x0)
-		
-		X0s = copy.(eachcol(X0))
-		
-		d_its = DF.DataFrame( :x0 => X0s )
-		d_fcalls = DF.DataFrame( :x0 => X0s )
-		d_gcalls = DF.DataFrame( :x0 => X0s )
-
-		d_solved = Dict{String, Float64}()
-		
-		Threads.@threads for (sr_name, step_rule) in all_rules
-			@info "\t * $(sr_name)"
-			#!(sr_name == "PRP3") && continue
-
-			solved = 0
-			its = Int[]
-			fcalls = Int[]
-			gcalls = Int[]
-			
-			for x0 in eachcol(X0)
-				#@info "$(NonlinearCG.pretty_row_vec(x0))"
-				rtp = scale_problems ? TP.make_scaled(tp, x0) : tp
-
-				res_tuple = run_mop(
-					rtp, x0, step_rule; 
-					max_iter, crit_tol_abs, log_level, x_tol_rel,
-				)
-
-				if res_tuple.critval < crit_tol_abs
-					solved += 1
-				end
-
-				n_its = res_tuple.num_its
-				n_fcalls = res_tuple.num_func_calls
-				n_gcalls = res_tuple.num_grad_calls
-				#@info "n_its = $(n_its), n_fcalls = $(n_fcalls), n_gcalls = $(n_gcalls)."
-				push!(its, n_its)
-				push!(fcalls, n_fcalls)
-				push!(gcalls, n_gcalls)
-			end
-
-			lock(tlock) do
-				d_its[:, sr_name] .= copy(its)
-				d_fcalls[:, sr_name] .= copy(fcalls)
-				d_gcalls[:, sr_name] .= copy(gcalls)
-				d_solved[sr_name] = solved / num_x0 * 100
-			end
+		step_rule_names = collect(keys(STEP_RULES))
+		df_solved = result_dataframe(step_rule_names)
+		df_its = result_dataframe(["max"; step_rule_names])
+		df_fcalls = result_dataframe(step_rule_names)
+		df_gcalls = result_dataframe(step_rule_names)
+	
+		agg_subdf(sdf) = first(DF.combine(sdf, DF.Not(:x0) .=> DF.median; renamecols=false))
+	
+		add_pnames!(df, problem_names) = begin
+			df.Problem .= problem_names
+			DF.select!(df, "Problem", DF.Not("Problem"))
 		end
-		push!(df_its, agg_subdf(d_its); cols=:subset)
-		push!(df_fcalls, agg_subdf(d_fcalls); cols=:subset)
-		push!(df_gcalls, agg_subdf(d_gcalls); cols=:subset)
-		push!(df_solved, d_solved; cols=:subset)
+	
+		problem_names = String[]
 		
-	end
-	add_pnames!(df_its, problem_names)
-	add_pnames!(df_fcalls, problem_names)
-	add_pnames!(df_gcalls, problem_names)
-	add_pnames!(df_solved, problem_names)
-
-	if save_dataframes
-		jldsave(
-			"dataframes_$(modestring(armijo_mode))_$(@sprintf("%.e", crit_tol_abs)).jld2";
-			df_its, df_fcalls, df_gcalls, df_solved
-		)
+		all_rules = collect(pairs(STEP_RULES))	# collect for Threads
+		tlock = ReentrantLock()					# lock for parallel execution
+		#@progress for (tp_name, tp) in PROBLEMS
+		@progress for tp_name in collect(keys(PROBLEMS))
+			tp = PROBLEMS[tp_name]
+			@info "Problem $(tp_name)"
+			push!(problem_names, tp_name)
+			
+			num_vars = TP.num_variables(tp)
+			lb = TP.lower_variable_bounds(tp)
+			ub = TP.upper_variable_bounds(tp)
+	
+			wb = ub .- lb
+			X0 = lb .+ wb .* rand(num_vars, num_x0)
+			
+			X0s = copy.(eachcol(X0))
+			
+			d_its = DF.DataFrame( :x0 => X0s )
+			d_fcalls = DF.DataFrame( :x0 => X0s )
+			d_gcalls = DF.DataFrame( :x0 => X0s )
+	
+			d_solved = Dict{String, Float64}()
+	
+			max_iter_tp = max_iter_func(TP.num_variables(tp))
+			
+			Threads.@threads for (sr_name, step_rule) in all_rules
+				@info "\t * $(sr_name)"
+				#!(sr_name == "PRP3") && continue
+	
+				solved = 0
+				its = Int[]
+				fcalls = Int[]
+				gcalls = Int[]
+				
+				for x0 in eachcol(X0)
+					#@info "$(NonlinearCG.pretty_row_vec(x0))"
+					rtp = scale_problems ? TP.make_scaled(tp, x0) : tp
+	
+					res_tuple = run_mop(
+						rtp, x0, step_rule; 
+						max_iter = max_iter_tp,
+						crit_tol_abs, log_level, x_tol_rel,
+					)
+	
+					if res_tuple.critval < crit_tol_abs
+						solved += 1
+					end
+	
+					n_its = res_tuple.num_its
+					n_fcalls = res_tuple.num_func_calls
+					n_gcalls = res_tuple.num_grad_calls
+					#@info "n_its = $(n_its), n_fcalls = $(n_fcalls), n_gcalls = $(n_gcalls)."
+					push!(its, n_its)
+					push!(fcalls, n_fcalls)
+					push!(gcalls, n_gcalls)
+				end
+	
+				lock(tlock) do
+					d_its[:, sr_name] .= copy(its)
+					d_fcalls[:, sr_name] .= copy(fcalls)
+					d_gcalls[:, sr_name] .= copy(gcalls)
+					d_solved[sr_name] = solved / num_x0 * 100
+				end
+			end
+			
+			push!(df_its, agg_subdf(d_its); cols=:subset)
+			df_its[end, :max] = max_iter_tp
+			push!(df_fcalls, agg_subdf(d_fcalls); cols=:subset)
+			push!(df_gcalls, agg_subdf(d_gcalls); cols=:subset)
+			push!(df_solved, d_solved; cols=:subset)
+	
+			#length(problem_names) >= 3 && break
+		end
+		add_pnames!(df_its, problem_names)
+		add_pnames!(df_fcalls, problem_names)
+		add_pnames!(df_gcalls, problem_names)
+		add_pnames!(df_solved, problem_names)
+	
+		if save_dataframes
+			jldsave(
+				res_fpath;
+				df_its, df_fcalls, df_gcalls, df_solved
+			)
+		end
+	else
+		df_its, df_fcalls, df_gcalls, df_solved = load(res_fpath, "df_its", "df_fcalls", "df_gcalls", "df_solved")
 	end
 
 	if make_latex_tables
-		make_latex(
-			df_its;
-			armijo_mode, fname_prefix, crit_tol_abs,
-			resname = "its", resword = "Number of Iterations",
-		)
-		make_latex(
-			df_its;
-			armijo_mode, fname_prefix, crit_tol_abs,
-			resname = "fcalls", resword = "Number of Func. Calls",
-		)
-		make_latex(
-			df_its;
-			armijo_mode, fname_prefix, crit_tol_abs,
-			resname = "gcalls", resword = "Number of Grad. Calls",
-		)
-		make_latex(
-			df_solved;
-			armijo_mode, fname_prefix, crit_tol_abs,
-			resname = "solved", resword = "Solved Percentage",
-			comp = (x, y) -> x >= y
+		@info "Loading $(res_fpath)."
+		result_latex_tables(
+			df_its, df_fcalls, df_gcalls, df_solved;
+			armijo_mode, fname_prefix, crit_tol_abs
 		)
 	end
 	
@@ -467,21 +549,123 @@ function run_experiments(;
 end
 
 # ╔═╡ 6ee32cf1-1a5c-459a-8be7-a4c428e8cf18
-run_experiments(; 
-	scale_problems=true, 
-	num_x0=100, 
-	crit_tol_abs=1e-6, 
-	x_tol_rel=1e-10,
-	max_iter=1000,
-	armijo_mode=Val(:all),
-	make_latex_tables = true
-)
+(
+	df_its_1e_6, df_fcalls_1e_6, df_gcalls_1e_6, df_solved_1e_6
+) = @use_memo([run1]) do
+	if run1 >= 1
+		run_experiments(; 
+			scale_problems=true, 
+			num_x0=100, 
+			crit_tol_abs=1e-6, 
+			x_tol_rel=1e-10,
+			max_iter= n -> max(10 * n, 1000),
+			armijo_mode=Val(:all),
+			make_latex_tables = true,
+			overwrite = false			
+		)
+	end
+end
+
+# ╔═╡ 74ffcd43-d36b-4ad5-8609-232b404d288e
+md"### Problem Table"
+
+# ╔═╡ b0783a63-5064-43e0-bd89-b04804260951
+begin
+	pdf = DF.DataFrame(
+		name = String[],
+		num_vars = Int[],
+		num_objectives = Int[],
+		lb = Vector{Float64}[],
+		ub = Vector{Float64}[],
+		refs = Vector{String}[]
+	)
+	for (name, tp) in pairs(PROBLEMS)
+		num_vars = TP.num_variables(tp)
+		num_objectives = TP.num_objectives(tp)
+		lb = TP.lower_variable_bounds(tp)
+		ub = TP.upper_variable_bounds(tp)
+		refs = let rk=TP.reference_keys(tp); isnothing(rk) ? [] : collect(rk) end
+		push!(pdf, (; name, num_vars, num_objectives, lb, ub, refs))
+	end
+
+	pdf
+end
+
+# ╔═╡ aa78709d-3d20-4462-834d-7830d318de3c
+function bound_strings(bounds)
+	b_strings = []
+	for bvec in bounds
+		b = first(bvec)
+		if all(isapprox(b), bvec)
+			_b = isapprox(b, π) ? "\\pi" : isapprox(b, -π) ? "-\\pi" : @sprintf("%g", b)
+			_s = "\$[" * _b * ", \\ldots, " * _b * "]\$"
+		else
+			_s = "\$[" * join([@sprintf("%g", _b) for _b in bvec], ", ") * "]\$"
+		end
+		s = LaTeXString(_s)
+		push!(b_strings, s)
+	end
+	return b_strings
+end	
+
+# ╔═╡ b2d13f8d-a9d9-4a05-9041-085703b1cbb2
+function ref_strings(refs)
+	r_strings = []
+	for rvec in refs
+		if isempty(rvec)
+			push!(r_strings, "")
+			continue
+		end
+		s = LaTeXString("\\cite{" * join(rvec, ",") * "}")
+		push!(r_strings, s)
+	end
+	return r_strings
+end
+
+# ╔═╡ 790ffbcb-0cfe-467d-b515-8285e79858ae
+begin
+	lpdf = DF.select(pdf, [:name, :num_vars, :num_objectives])
+	lpdf.lb = bound_strings(pdf.lb)
+	lpdf.ub = bound_strings(pdf.ub)
+	lpdf.refs = ref_strings(pdf.refs)
+
+	lpdf
+end
+
+# ╔═╡ 5478dfa9-55d2-4d72-9d34-c60e02952b34
+let
+	nrows, ncols = size(lpdf)
+	
+	colspec = "l|" * join("c" for _ in 2:ncols)
+
+	cols = [
+		"Name",
+		L"\dimIn",
+		L"\dimOut",
+		"lower bounds",
+		"upper bounds",
+		"Ref."
+	]
+	rows = Any[
+		cols,
+		Rule(:mid),
+		collect(eachrow(lpdf))...,
+		Rule(:bottom)
+	]
+
+	pushfirst!(rows, Rule(:top))
+	
+	latex_tabular("problem_table.tex", Tabular(colspec), rows)
+end
 
 # ╔═╡ 74de0d46-dabb-41df-a45d-af5d84dc3a77
 md"## Temporary"
 
 # ╔═╡ bf1fa747-d17e-42f5-b9d3-5dddf535214b
-let tp = TP.DGO1()
+# ╠═╡ disabled = true
+#=╠═╡
+let tp = TP.MMR5c();
+	#tp = TP.DGO1()
 
 	step_rule = PRPConeProjection(;
 		sz_rule = ArmijoBacktracking(;
@@ -490,11 +674,13 @@ let tp = TP.DGO1()
 		)
 	);
 	step_rule = FletcherReevesFractionalLP1(;
+		constant = 10,
 		sz_rule = ArmijoBacktracking(;
 			mode=Val(:all),
 			constant=1e-15,
 		)
 	);
+	#step_rule = SteepestDescentDirection()
 	n = TP.num_variables(tp)
 	
 	lb = TP.lower_variable_bounds(tp)
@@ -502,23 +688,24 @@ let tp = TP.DGO1()
 
 	x0 = lb .+ (ub .- lb) .* rand(n)
 	
-	rtp = TP.make_scaled(tp, x0)
+	#rtp = TP.make_scaled(tp, x0)
 	rtp = tp
 	res = run_mop(
 		rtp, x0, step_rule;
-		max_iter=1000,
+		max_iter=max(10 * n, 1000),
 		crit_tol_abs=1e-6,
 		x_tol_rel=1e-10,
-		log_level=Info
 	)
 	display(x0)
 	res
 end
+  ╠═╡ =#
 
 # ╔═╡ Cell order:
 # ╠═61eae34f-e8d3-4afb-ac6f-f6b33096373f
 # ╟─149ef455-62bb-47e8-a77d-6a3c5eaa8444
 # ╠═2cc74d18-b87d-11ef-0afe-077b7f4108d3
+# ╠═c5f5b5ff-443c-4e53-9a32-48235b27cc1e
 # ╠═cb0f7e62-2f83-4487-b5b8-7a9ee2f7df87
 # ╠═0735af1b-d5a8-4906-92be-5edbffe58465
 # ╠═e438b191-0771-4bf1-840b-6f6aac9a49e7
@@ -545,10 +732,19 @@ end
 # ╠═8653f957-0389-45f1-a8bf-fe8f175afc0c
 # ╟─ef16b140-9921-466a-8eed-6087a1c413e4
 # ╠═b8a46fb4-c976-4681-81e5-daa98cedf53b
+# ╠═a18e5d2d-0b5a-4c6d-bbd6-eac4661c36d6
 # ╠═2b1b8535-6470-4b72-ac36-cb516a131ba8
+# ╟─d453e7aa-9bba-4681-872b-b73b8c6c79fa
+# ╠═4cb1d9b6-76e6-46e8-a918-8ae8e02ea1db
 # ╠═6ee32cf1-1a5c-459a-8be7-a4c428e8cf18
 # ╟─9b68cb0b-f2d1-4872-b186-dc0304cf9a40
 # ╠═d4c3eb7e-fa4e-4672-ac7e-47cde0ba6aeb
-# ╟─076c32ae-8241-4ff4-b640-230629003f40
+# ╠═076c32ae-8241-4ff4-b640-230629003f40
+# ╟─74ffcd43-d36b-4ad5-8609-232b404d288e
+# ╠═b0783a63-5064-43e0-bd89-b04804260951
+# ╠═aa78709d-3d20-4462-834d-7830d318de3c
+# ╠═b2d13f8d-a9d9-4a05-9041-085703b1cbb2
+# ╠═790ffbcb-0cfe-467d-b515-8285e79858ae
+# ╠═5478dfa9-55d2-4d72-9d34-c60e02952b34
 # ╟─74de0d46-dabb-41df-a45d-af5d84dc3a77
 # ╠═bf1fa747-d17e-42f5-b9d3-5dddf535214b

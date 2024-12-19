@@ -29,6 +29,9 @@ function upper_variable_bounds(tp::AbstractTestProblem)
     return error("`method not implemented for $(typeof(tp)).")
 end
 
+# ╔═╡ 67dcab82-8209-4f7b-bf63-cacebeaaedb2
+abstract type AbstractTestProblemError end
+
 # ╔═╡ 5dd6b5b2-d19c-46be-921c-cb8c1b2e4bcd
 function in_place_objectives!(y, tp::AbstractTestProblem, x)
     return error("`method not implemented for $(typeof(tp)).")
@@ -88,6 +91,25 @@ function (oc::IPObjectivesClosure)(y, x)
 end
 end
 
+# ╔═╡ 6db0e549-182e-499a-a3ea-aa0f3facb554
+begin
+struct OOPObjectivesClosure{
+    tp_Type
+}
+    tp :: tp_Type
+end
+function (oc::OOPObjectivesClosure)(x)
+    tp = oc.tp
+	no = num_objectives(tp)
+	y = zeros(no)
+    code = in_place_objectives!(y, tp, x)
+	if isa(code, AbstractTestProblemError)
+		return code
+	end
+	return y
+end
+end
+
 # ╔═╡ 0daa6bb3-55e0-4863-8962-c1953fc3822d
 function in_place_jac!(Dy, rtp::RScaledTestProblem, x)
     tp = rtp.tp
@@ -109,6 +131,26 @@ end
 function (oc::IPJacClosure)(Dy, x)
     tp = oc.tp
     return in_place_jac!(Dy, tp, x)
+end
+end
+
+# ╔═╡ d768b7ca-85d5-4687-a558-9678f08bef70
+begin
+struct OOPJacClosure{
+    tp_Type
+}
+    tp :: tp_Type
+end
+function (oc::OOPJacClosure)(x)
+    tp = oc.tp
+	nv = num_variables(tp)
+	no = num_objectives(tp)
+	Dy = zeros(no, nv)
+    code = in_place_jac!(Dy, tp, x)
+	if code isa AbstractTestProblemError
+		return code
+	end
+	return Dy
 end
 end
 
@@ -631,10 +673,13 @@ version = "17.4.0+2"
 # ╠═bae1f330-4c9f-4779-bd2f-c4534225e09d
 # ╠═32879755-af83-4718-9f10-7297f0ac72d4
 # ╠═519c0921-016d-4e06-89ec-24dbd6ab52e7
+# ╠═67dcab82-8209-4f7b-bf63-cacebeaaedb2
 # ╠═5dd6b5b2-d19c-46be-921c-cb8c1b2e4bcd
 # ╠═02c4f00f-712d-497a-8a4a-466a415519e8
 # ╠═99e6a169-cda6-4cdf-9dd2-604602a3e4fd
+# ╠═6db0e549-182e-499a-a3ea-aa0f3facb554
 # ╠═6189f4ac-5fdb-4f2e-bd54-97cf7ac120e0
+# ╠═d768b7ca-85d5-4687-a558-9678f08bef70
 # ╠═fc1fabd6-2cf1-47e7-8c7a-42d3ea04f4e2
 # ╠═7417770a-0238-4835-af0f-f0d38e832aff
 # ╟─c48a893a-d2a3-4ce7-acd0-5b7c4cf5cebe

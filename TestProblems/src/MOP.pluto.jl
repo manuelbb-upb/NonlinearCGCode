@@ -44,17 +44,20 @@ _mop_has_refs && Markdown.parse(printrefs(AbstractMOPTestProblem))
 md"## MOP 2"
 
 # ╔═╡ fe514db9-330b-40e6-8258-f4e908bece52
-struct MOP2 <: AbstractMOPTestProblem end
+Base.@kwdef struct MOP2 <: AbstractMOPTestProblem 
+	L :: Float64 = -4.0
+	U :: Float64 = 4.0
+end
 
 # ╔═╡ abca6c2f-30ff-4bdf-aeba-8a928726359d
 begin
 	@addmethod num_variables(::MOP2) = 2
 	@addmethod num_objectives(::MOP2) = 2
 	@addmethod function lower_variable_bounds(tp::MOP2)
-		return [-4.0, -4.0]
+		return fill(tp.L, 2)
 	end
 	@addmethod function upper_variable_bounds(tp::MOP2)
-		return -lower_variable_bounds(tp)
+		return fill(tp.U, 2)
 	end
 	@addmethod function reference_keys(::Type{MOP2})
 		return (
@@ -79,8 +82,9 @@ end
 	n = num_variables(tp)
 	sn = 1/sqrt(n)
 
-	Dy[1, :] = 2 .* (x .- sn) .* exp( - sum( (x .- sn).^2 ) )
-	Dy[2, :] = 2 .* (x .+ sn) .* exp( - sum( (x .+ sn).^2 ) )
+	Dy[1, :] = (2 * exp( - sum( (x .- sn).^2 ) )) .* (x .- sn)
+	Dy[2, :] = (2 * exp( - sum( (x .+ sn).^2 ) )) .* (x .+ sn)
+	
     return nothing
 end
 
