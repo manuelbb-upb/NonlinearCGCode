@@ -2,3 +2,4 @@ backup
 *.tex
 Manifest.toml
 *.png
+*.jld2
